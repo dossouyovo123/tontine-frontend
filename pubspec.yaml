@@ -1,0 +1,48 @@
+name: tontine
+description: "Application de gestion de tontine."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Interface
+  cupertino_icons: ^1.0.8
+
+  # Dates et formatage
+  intl: ^0.19.0
+  # Sélection d'images (photo de profil membre)
+  image_picker: ^1.0.7
+
+  # Génération de PDF
+  pdf: ^3.10.8
+
+  # Aperçu / impression / partage PDF
+  printing: ^5.13.1
+
+  # Accès au répertoire temporaire (sauvegarde PDF)
+  path_provider: ^2.1.5
+
+  # Partage de fichiers (PDF → WhatsApp, etc.)
+  share_plus: ^7.0.0
+  # Ouverture d'URLs externes (wa.me/...)
+  url_launcher: ^6.3.2
+  provider: ^6.1.2
+  http: ^1.2.1
+  shared_preferences: ^2.2.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+flutter:
+  uses-material-design: true
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/logo.jpeg"
