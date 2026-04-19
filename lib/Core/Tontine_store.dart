@@ -19,8 +19,7 @@ const int kSanctionAbsence    = 500;
 // ============================================================
 
 class ApiService {
-  
-  static const String baseUrl = 'http://192.168.45.135:8000/api/v1';
+  static const String baseUrl = 'http://192.168.211.135:8000/api/v1';
 
   static final ApiService _i = ApiService._();
   ApiService._();
@@ -38,6 +37,7 @@ class ApiService {
     _token = t;
     (await SharedPreferences.getInstance()).setString('api_token', t);
   }
+
   Future<void> clearToken() async {
     _token = null;
     (await SharedPreferences.getInstance()).remove('api_token');
@@ -161,7 +161,6 @@ class ApiService {
   }
 
   // ── Cotisations ───────────────────────────────────────────
-
   Future<Map<String, dynamic>> getCotisationsSemaine([int? semaine]) async =>
       (await req('GET',
           semaine != null
@@ -182,7 +181,6 @@ class ApiService {
   Future<void> annulerCotisation(int id) async =>
       req('PUT', '/cotisations/$id/annuler');
 
-  /// Retourne toutes les cotisations d'un membre (payées ET impayées)
   Future<Map<String, dynamic>> getCotisationsMembre(int membreId) async =>
       (await req('GET', '/membres/$membreId/cotisations')) as Map<String, dynamic>;
 
@@ -381,22 +379,31 @@ class TontineStore extends ChangeNotifier {
   TontineStore._();
   factory TontineStore() => _i;
 
-  // statut par membre et par semaine : { membreId: { semaine: 'paye'|'impaye' } }
   Map<int, Map<int, String>> cotisationsParMembre = {};
+  Map<int, Map<int, int>>    _cotisationIds       = {};
 
-  // IDs des cotisations en DB : { membreId: { semaine: cotisationId } }
-  // Permet d'annuler sans refaire un appel API juste pour récupérer l'ID
-  Map<int, Map<int, int>> _cotisationIds = {};
+  List<Membre> membres   = [];
+  bool         isLoading = false;
+  String?      errorMsg;
 
-  List<Membre>       membres   = [];
-  bool               isLoading = false;
-  String?            errorMsg;
-
-  // Ancien set utilisé en interne — conservé pour compatibilité
   Map<int, Set<int>> cotisationsSemaines = {};
 
-  // ── Dates ─────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // ✅ RESET COMPLET — appelé au logout pour repartir propre
+  // Évite que les données/flags de la session précédente
+  // polluent la nouvelle session après re-connexion.
+  // ══════════════════════════════════════════════════════════
+  void reset() {
+    membres               = [];
+    cotisationsParMembre  = {};
+    _cotisationIds        = {};
+    cotisationsSemaines   = {};
+    isLoading             = false;
+    errorMsg              = null;
+    notifyListeners();
+  }
 
+  // ── Dates ─────────────────────────────────────────────────
   DateTime get premierSamediJanvier {
     final a    = DateTime.now().year;
     final jan1 = DateTime(a, 1, 1);
@@ -415,7 +422,6 @@ class TontineStore extends ChangeNotifier {
   }
 
   // ── Statut ────────────────────────────────────────────────
-
   String calculerStatut(int membreId) {
     final sem    = semaineCourante;
     final statut = statutSemaine(membreId, sem);
@@ -431,21 +437,22 @@ class TontineStore extends ChangeNotifier {
   String statutSemaine(int membreId, int semaine) =>
       cotisationsParMembre[membreId]?[semaine] ?? 'impaye';
 
-  // ── Gestion des IDs de cotisation ─────────────────────────
-
-  /// Sauvegarde l'ID DB d'une cotisation (retourné par l'API après encaissement)
+  // ── IDs de cotisation ─────────────────────────────────────
   void saveCotisationId(int membreId, int semaine, int cotisationId) {
     _cotisationIds.putIfAbsent(membreId, () => {});
     _cotisationIds[membreId]![semaine] = cotisationId;
   }
 
-  /// Récupère l'ID DB d'une cotisation (pour pouvoir l'annuler)
   int? getCotisationId(int membreId, int semaine) =>
       _cotisationIds[membreId]?[semaine];
 
-  // ── Chargement ────────────────────────────────────────────
+  // ── Chargement — protégé contre les appels simultanés ─────
+  bool _chargeEnCours = false;
 
   Future<void> chargerMembres() async {
+    // ✅ Anti double-call : si déjà en cours, on attend pas de relancer
+    if (_chargeEnCours) return;
+    _chargeEnCours = true;
     isLoading = true; errorMsg = null; notifyListeners();
     try {
       final res  = await ApiService().getMembres();
@@ -459,6 +466,7 @@ class TontineStore extends ChangeNotifier {
     } catch (_) {
       errorMsg = 'Erreur réseau';
     }
+    _chargeEnCours = false;
     isLoading = false; notifyListeners();
   }
 
@@ -469,14 +477,13 @@ class TontineStore extends ChangeNotifier {
       final items = (res['membres'] as List? ?? []);
 
       for (final item in items) {
-        final mid   = item['membre_id'] as int;
+        final mid    = item['membre_id'] as int;
         final statut = item['statut'] as String? ?? 'impaye';
         final cotId  = item['cotisation_id'] as int?;
 
         cotisationsParMembre.putIfAbsent(mid, () => {});
         cotisationsParMembre[mid]![s] = statut;
 
-        // Sauvegarder l'ID si disponible (utile pour l'annulation)
         if (cotId != null) saveCotisationId(mid, s, cotId);
       }
 
@@ -509,7 +516,6 @@ class TontineStore extends ChangeNotifier {
   }
 
   // ── Mutations membres ─────────────────────────────────────
-
   void ajouterMembre(Membre m)  { membres.add(m);                         notifyListeners(); }
   void supprimerMembre(int id)  { membres.removeWhere((m) => m.id == id); notifyListeners(); }
 
@@ -520,11 +526,9 @@ class TontineStore extends ChangeNotifier {
   }
 
   // ── Mutations cotisations ─────────────────────────────────
-
   void encaisserLocal(int membreId, int semaine) {
     cotisationsParMembre.putIfAbsent(membreId, () => {});
     cotisationsParMembre[membreId]![semaine] = 'paye';
-
     cotisationsSemaines.putIfAbsent(membreId, () => {}).add(semaine);
 
     try {

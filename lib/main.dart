@@ -4,7 +4,6 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import '../Core/Tontine_store.dart';
 import 'package:intl/intl.dart';
-// Imports pages admin,
 import 'LoginPage.dart';
 import 'admin/DashboardPage.dart';
 import 'admin/MembresPage.dart';
@@ -36,7 +35,7 @@ class TontineAdminApp extends StatelessWidget {
       value: TontineStore(),
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'MaTontine',
+        title: 'J-solution',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1565C0)),
@@ -79,8 +78,7 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
     leading: showBackButton ? const BackButton(color: Colors.white) : null,
     actions: actions,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(bottom: Radius.circular(25)),
-    ),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(25))),
     systemOverlayStyle: SystemUiOverlayStyle.light,
   );
 
@@ -104,9 +102,12 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void initState() {
     super.initState();
-    // Pré-charge les membres dès l'ouverture
+    // ✅ Un seul appel chargerMembres(), via postFrameCallback pour ne pas
+    // bloquer le premier rendu. LoginPage n'en appelle plus un second.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      TontineStore().chargerMembres();
+      if (TontineStore().membres.isEmpty) {
+        TontineStore().chargerMembres();
+      }
     });
   }
 
@@ -306,11 +307,57 @@ class AdminMoreMenu extends StatelessWidget {
     child: ListTile(
       leading: Icon(Icons.logout_rounded, color: Colors.red.shade600, size: 26),
       title: Text('Déconnexion',
-          style: TextStyle(color: Colors.red.shade600, fontWeight: FontWeight.bold)),
+          style: TextStyle(
+              color: Colors.red.shade600, fontWeight: FontWeight.bold)),
       subtitle: Text('Quitter la session admin',
           style: TextStyle(color: Colors.red.shade300, fontSize: 11)),
       onTap: () async {
+        // ── Confirmation avant déconnexion ────────────────
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(children: [
+              Icon(Icons.logout_rounded, color: Colors.red.shade600),
+              const SizedBox(width: 10),
+              Text('Déconnexion',
+                  style: TextStyle(
+                      color: Colors.red.shade600, fontWeight: FontWeight.bold)),
+            ]),
+            content: const Text(
+              'Voulez-vous vraiment quitter la session admin ?\n\n'
+                  'Vous devrez vous reconnecter pour accéder à l\'application.',
+              style: TextStyle(fontSize: 14, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('ANNULER'),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade600,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10))),
+                onPressed: () => Navigator.pop(context, true),
+                icon: const Icon(Icons.logout_rounded,
+                    color: Colors.white, size: 16),
+                label: const Text('SE DÉCONNECTER',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+
+        if (ok != true) return;
+
+        // ✅ ORDRE CRITIQUE du logout :
+        // 1. Appel API logout (révoque le token côté serveur)
         await ApiService().logout();
+        // 2. Reset du store
+        TontineStore().reset();
+        // 3. Navigation → login
         if (context.mounted) {
           Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
         }
@@ -334,7 +381,7 @@ class _HistoriqueDistributionsPageState
     extends State<HistoriqueDistributionsPage> {
   String _searchQuery = '';
   List<Map<String, dynamic>> _distributions = [];
-  bool   _isLoading = true;
+  bool    _isLoading = true;
   String? _error;
 
   @override
@@ -367,10 +414,26 @@ class _HistoriqueDistributionsPageState
     final fmt = NumberFormat('#,###', 'fr_FR');
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
-      appBar: const CustomAppBar(
-          title: 'Historique Distributions', showBackButton: true),
+      appBar: AppBar(
+        title: const Text('Historique Distributions',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFF1565C0),
+        centerTitle: true,
+        elevation: 0,
+        // ✅ Même bouton retour que SanctionsPage et HistoriqueSanctionsPage
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: _charger),
+        ],
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(bottom: Radius.circular(20))),
+      ),
       body: Column(children: [
-        // Résumé
         Container(
           margin: const EdgeInsets.all(16),
           padding: const EdgeInsets.all(16),
@@ -379,13 +442,11 @@ class _HistoriqueDistributionsPageState
                   colors: [Colors.green.shade800, Colors.green.shade600]),
               borderRadius: BorderRadius.circular(16)),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _statCard('${fmt.format(_total)}', 'CFA distribués', Colors.greenAccent),
-            Container(height: 30, width: 1,
-                color: Colors.white.withOpacity(0.3)),
+            _statCard('${fmt.format(_total)}', 'CFA distribués', Colors.white),
+            Container(height: 30, width: 1, color: Colors.white.withOpacity(0.3)),
             _statCard('${_distributions.length}', 'distributions', Colors.white),
           ]),
         ),
-        // Recherche
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: TextField(
@@ -401,7 +462,6 @@ class _HistoriqueDistributionsPageState
           ),
         ),
         const SizedBox(height: 8),
-        // Liste
         Expanded(child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -411,8 +471,7 @@ class _HistoriqueDistributionsPageState
           const SizedBox(height: 12),
           Text(_error!, style: TextStyle(color: Colors.grey.shade500)),
           const SizedBox(height: 12),
-          ElevatedButton(onPressed: _charger,
-              child: const Text('Réessayer')),
+          ElevatedButton(onPressed: _charger, child: const Text('Réessayer')),
         ]))
             : _filtered.isEmpty
             ? const Center(child: Text('Aucune distribution trouvée'))
@@ -422,8 +481,8 @@ class _HistoriqueDistributionsPageState
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _filtered.length,
             itemBuilder: (_, i) {
-              final d   = _filtered[i];
-              final nom = d['membre']?['nom'] ?? '—';
+              final d       = _filtered[i];
+              final nom     = d['membre']?['nom'] ?? '—';
               final montant = d['montant'] as int? ?? 0;
               final date    = d['date_distribution'] ?? '';
               final note    = d['note'] ?? '';
@@ -475,13 +534,13 @@ class _HistoriqueDistributionsPageState
     );
   }
 
-  Widget _statCard(String val, String label, Color color) => Column(children: [
-    Text(val, style: TextStyle(
-        color: color, fontWeight: FontWeight.bold, fontSize: 16)),
-    Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
-  ]);
+  Widget _statCard(String val, String label, Color color) =>
+      Column(children: [
+        Text(val, style: TextStyle(
+            color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+      ]);
 }
-
 // ============================================================
 // HISTORIQUE SANCTIONS — API
 // ============================================================
@@ -496,7 +555,7 @@ class HistoriqueSanctionsPage extends StatefulWidget {
 class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
   String _searchQuery = '';
   List<Map<String, dynamic>> _sanctions = [];
-  bool   _isLoading = true;
+  bool    _isLoading = true;
   String? _error;
 
   static const Color _redDark = Color(0xFFB71C1C);
@@ -519,17 +578,78 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
     }
   }
 
+  // ✅ Marquer payé avec confirmation — identique à SanctionsPage
   Future<void> _marquerPaye(Map<String, dynamic> s) async {
+    final nom = s['membre']?['nom'] ?? '—';
+    final fmt = NumberFormat('#,###', 'fr_FR');
+    final montant = s['montant'] as int? ?? 0;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [
+          Icon(Icons.check_circle_rounded, color: Colors.green),
+          SizedBox(width: 10),
+          Text('Sanction payée ?'),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('$nom a réglé sa sanction ?'),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.green.shade200),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              const Text('Montant encaissé :',
+                  style: TextStyle(fontWeight: FontWeight.w500)),
+              Text('${fmt.format(montant)} CFA',
+                  style: const TextStyle(
+                      color: Colors.green, fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('NON'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.check_rounded, color: Colors.white, size: 16),
+            label: const Text('OUI, CONFIRMER',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    ) ?? false;
+
+    if (!ok) return;
+
     try {
       await ApiService().marquerSanctionPayee(s['id'] as int);
       setState(() => s['statut'] = 'paye');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Sanction marquée comme payée'),
-          backgroundColor: Colors.green, behavior: SnackBarBehavior.floating));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Sanction de $nom marquée comme payée ✓',
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.message), backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating));
+        content: Text(e.message,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
     }
   }
 
@@ -550,14 +670,24 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
       appBar: AppBar(
         title: const Text('Historique Sanctions',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        backgroundColor: _redDark, centerTitle: true, elevation: 0,
-        leading: const BackButton(color: Colors.white),
+        backgroundColor: _redDark,
+        centerTitle: true,
+        elevation: 0,
+        // ✅ Même bouton retour que SanctionsPage
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.white),
+          IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
               onPressed: _charger),
         ],
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(bottom: Radius.circular(20))),
       ),
       body: Column(children: [
+        // ── Résumé stats ────────────────────────────────────
         Container(
           margin: const EdgeInsets.all(16),
           padding: const EdgeInsets.all(16),
@@ -566,17 +696,15 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
                   colors: [Colors.red.shade800, Colors.red.shade600]),
               borderRadius: BorderRadius.circular(16)),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _statCard('${fmt.format(_totalEncaisse)} CFA', 'encaissés',
-                Colors.greenAccent),
-            Container(height: 30, width: 1,
-                color: Colors.white.withOpacity(0.3)),
-            _statCard('${fmt.format(_totalAttente)} CFA', 'en attente',
-                Colors.orangeAccent),
-            Container(height: 30, width: 1,
-                color: Colors.white.withOpacity(0.3)),
+            _statCard('${fmt.format(_totalEncaisse)} CFA', 'encaissés', Colors.greenAccent),
+            Container(height: 30, width: 1, color: Colors.white.withOpacity(0.3)),
+            _statCard('${fmt.format(_totalAttente)} CFA', 'en attente', Colors.orangeAccent),
+            Container(height: 30, width: 1, color: Colors.white.withOpacity(0.3)),
             _statCard('${_sanctions.length}', 'sanctions', Colors.white),
           ]),
         ),
+
+        // ── Recherche ───────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: TextField(
@@ -584,7 +712,9 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
             decoration: InputDecoration(
               hintText: 'Chercher un membre...',
               prefixIcon: const Icon(Icons.search, color: _redDark),
-              filled: true, fillColor: Colors.white, contentPadding: EdgeInsets.zero,
+              filled: true, fillColor: Colors.white,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(30),
                   borderSide: BorderSide.none),
@@ -592,83 +722,90 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
           ),
         ),
         const SizedBox(height: 8),
-        Expanded(child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-            ? Center(child: Column(
-            mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.wifi_off, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
-          Text(_error!, style: TextStyle(color: Colors.grey.shade500)),
-          const SizedBox(height: 12),
-          ElevatedButton(
-              onPressed: _charger, child: const Text('Réessayer')),
-        ]))
-            : _filtered.isEmpty
-            ? const Center(child: Text('Aucune sanction trouvée'))
-            : RefreshIndicator(
-          onRefresh: _charger,
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _filtered.length,
-            itemBuilder: (_, i) {
-              final s        = _filtered[i];
-              final nom      = s['membre']?['nom'] ?? '—';
-              final motif    = (s['motif'] as String? ?? '')
-                  .replaceAll('_', ' ');
-              final montant  = s['montant'] as int? ?? 0;
-              final date     = s['date_sanction'] ?? '';
-              final isPaid   = s['statut'] == 'paye';
-              final isAbsence = motif.toLowerCase().contains('absence');
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
+
+        // ── Liste ───────────────────────────────────────────
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(Icons.wifi_off, size: 48, color: Colors.grey.shade400),
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Colors.grey.shade500)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: _charger,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Réessayer'),
+            ),
+          ]))
+              : _filtered.isEmpty
+              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(Icons.gavel_rounded, size: 60, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text('Aucune sanction trouvée',
+                style: TextStyle(color: Colors.grey.shade400)),
+          ]))
+              : RefreshIndicator(
+            onRefresh: _charger,
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+              itemCount: _filtered.length,
+              itemBuilder: (_, i) {
+                final s         = _filtered[i];
+                final nom       = s['membre']?['nom'] ?? '—';
+                final motif     = (s['motif'] as String? ?? '').replaceAll('_', ' ');
+                final montant   = s['montant'] as int? ?? 0;
+                final date      = s['date_sanction'] ?? '';
+                final isPaid    = s['statut'] == 'paye';
+                final isAbsence = motif.toLowerCase().contains('absence');
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: Colors.grey.shade200),
                     boxShadow: [BoxShadow(
                         color: Colors.black.withOpacity(0.03),
-                        blurRadius: 8, offset: const Offset(0, 2))]),
-                child: ListTile(
-                  onTap: isPaid ? null : () => _marquerPaye(s),
-                  leading: CircleAvatar(
-                    backgroundColor:
-                    (isPaid ? Colors.green : Colors.red)
-                        .withOpacity(0.1),
-                    child: Icon(
-                      isPaid ? Icons.check_circle_rounded
-                          : isAbsence ? Icons.person_off_rounded
-                          : Icons.access_time_rounded,
-                      color: isPaid ? Colors.green : Colors.red,
-                    ),
+                        blurRadius: 8, offset: const Offset(0, 2))],
                   ),
-                  title: Text(nom,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold)),
-                  subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(motif, style: const TextStyle(fontSize: 12)),
-                        Text('Le $date', style: TextStyle(
-                            color: Colors.grey.shade500, fontSize: 11)),
-                        if (!isPaid)
-                          Container(
-                            margin: const EdgeInsets.only(top: 4),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: Colors.orange.shade50,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                    color: Colors.orange.shade200)),
-                            child: Text('Appuyer pour marquer payé',
-                                style: TextStyle(
-                                    color: Colors.orange.shade700,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500)),
-                          ),
-                      ]),
-                  trailing: Column(
+                  child: ListTile(
+                    // ✅ Tap → confirmation avant marquage
+                    onTap: isPaid ? null : () => _marquerPaye(s),
+                    leading: CircleAvatar(
+                      backgroundColor:
+                      (isPaid ? Colors.green : Colors.red).withOpacity(0.1),
+                      child: Icon(
+                        isPaid
+                            ? Icons.check_circle_rounded
+                            : isAbsence
+                            ? Icons.person_off_rounded
+                            : Icons.access_time_rounded,
+                        color: isPaid ? Colors.green : Colors.red,
+                      ),
+                    ),
+                    title: Text(nom,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(motif, style: const TextStyle(fontSize: 12)),
+                      Text('Le $date',
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                      if (!isPaid)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.orange.shade200)),
+                          child: Text('Appuyer pour marquer payé',
+                              style: TextStyle(
+                                  color: Colors.orange.shade700,
+                                  fontSize: 10, fontWeight: FontWeight.w500)),
+                        ),
+                    ]),
+                    trailing: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -677,25 +814,24 @@ class _HistoriqueSanctionsPageState extends State<HistoriqueSanctionsPage> {
                                 fontWeight: FontWeight.bold,
                                 color: Colors.red, fontSize: 13)),
                         const SizedBox(height: 2),
-                        Text(isPaid ? 'Payé' : 'En attente',
+                        Text(isPaid ? 'Payé ✓' : 'En attente',
                             style: TextStyle(
-                                color: isPaid
-                                    ? Colors.green : Colors.orange,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold)),
-                      ]),
-                ),
-              );
-            },
+                                color: isPaid ? Colors.green : Colors.orange,
+                                fontSize: 10, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        )),
+        ),
       ]),
     );
   }
 
   Widget _statCard(String val, String label, Color color) => Column(children: [
-    Text(val, style: TextStyle(
-        color: color, fontWeight: FontWeight.bold, fontSize: 14)),
+    Text(val, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14)),
     Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9)),
   ]);
 }
@@ -723,10 +859,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
   static const Color _primary = Color(0xFF1565C0);
 
   @override
-  void initState() {
-    super.initState();
-    _chargerProfil();
-  }
+  void initState() { super.initState(); _chargerProfil(); }
 
   @override
   void dispose() {
@@ -791,7 +924,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
         child: Column(children: [
-          // En-tête
           Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
             Container(
               height: 100, width: double.infinity,
@@ -824,14 +956,12 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
           const SizedBox(height: 80),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _sectionLabel('INFORMATIONS PERSONNELLES'),
               _card([
                 _textField(_nomCtrl, 'Nom complet', Icons.badge_outlined),
                 const SizedBox(height: 16),
-                _textField(_telCtrl, 'Téléphone',
-                    Icons.phone_android_rounded,
+                _textField(_telCtrl, 'Téléphone', Icons.phone_android_rounded,
                     type: TextInputType.phone),
               ]),
               const SizedBox(height: 24),
@@ -914,7 +1044,8 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
           prefixIcon: const Icon(Icons.lock_outline_rounded, color: _primary),
           suffixIcon: IconButton(
               icon: Icon(obscure
-                  ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined),
               onPressed: onToggle, color: Colors.grey),
           filled: true, fillColor: Colors.grey.shade50,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),

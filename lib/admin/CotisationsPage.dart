@@ -109,8 +109,6 @@ class _CotisationsPageState extends State<CotisationsPage> {
   Future<void> _annuler(Membre membre) async {
     final store = TontineStore();
     final sem   = store.semaineCourante;
-
-    // Récupérer l'ID de la cotisation depuis le store
     final cotId = store.getCotisationId(membre.id, sem);
 
     final ok = await showDialog<bool>(
@@ -165,10 +163,6 @@ class _CotisationsPageState extends State<CotisationsPage> {
 
   // ══════════════════════════════════════════════════════════
   // HISTORIQUE COMPLET
-  //
-  // Simplifié : on charge directement depuis l'API parMembre
-  // qui retourne TOUTES les semaines (payées ET impayées) depuis la DB.
-  // Plus besoin de reconstituer manuellement — le backend gère tout.
   // ══════════════════════════════════════════════════════════
   void _showHistorique(Membre membre) {
     final store        = TontineStore();
@@ -190,18 +184,13 @@ class _CotisationsPageState extends State<CotisationsPage> {
             if (loading && historique == null) {
               Future.microtask(() async {
                 try {
-                  // L'API retourne toutes les semaines (payées + impayées)
-                  // genererSemainesManquantes() est appelé côté backend avant le retour
                   final data = await ApiService().getCotisationsMembre(membre.id);
                   final rawCotisations = (data['cotisations'] as List?)
                       ?.cast<Map<String, dynamic>>() ?? [];
 
-                  // Les données viennent directement de la DB, propres et complètes
-                  // On applique le cache local pour les encaissements très récents
                   final list = rawCotisations.map((c) {
                     final s        = c['num_semaine'] as int;
                     final payeDb   = c['paye'] == true || c['statut'] == 'paye';
-                    // Cache local prioritaire (encaissement fait juste avant)
                     final payeLocal = store.aPayeSemaine(membre.id, s);
                     final payeFinal = payeLocal || payeDb;
 
@@ -216,7 +205,6 @@ class _CotisationsPageState extends State<CotisationsPage> {
                     };
                   }).toList();
 
-                  // Trier par semaine décroissante
                   list.sort((a, b) => (b['semaine'] as int).compareTo(a['semaine'] as int));
 
                   if (ctx2.mounted) {
@@ -445,7 +433,6 @@ class _CotisationsPageState extends State<CotisationsPage> {
     final fmt = NumberFormat('#,###', 'fr_FR');
 
     if (!paye) {
-      // ── Bouton ENCAISSER ──────────────────────────────────
       return GestureDetector(
         onTap: () async {
           final store   = TontineStore();
@@ -530,7 +517,6 @@ class _CotisationsPageState extends State<CotisationsPage> {
         ),
       );
     } else {
-      // ── Bouton ANNULER ────────────────────────────────────
       return GestureDetector(
         onTap: () async {
           final store         = TontineStore();
@@ -707,6 +693,10 @@ class _CotisationsPageState extends State<CotisationsPage> {
               ],
             ),
             body: Column(children: [
+
+              // ══════════════════════════════════════════════
+              // HEADER COMPACTÉ — tout sur 2 lignes denses
+              // ══════════════════════════════════════════════
               Container(
                 width: double.infinity,
                 decoration: const BoxDecoration(
@@ -715,103 +705,127 @@ class _CotisationsPageState extends State<CotisationsPage> {
                     begin: Alignment.topLeft, end: Alignment.bottomRight,
                   ),
                   borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(32),
-                      bottomRight: Radius.circular(32)),
+                      bottomLeft: Radius.circular(24),
+                      bottomRight: Radius.circular(24)),
                 ),
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
+                // ↓ padding réduit : était fromLTRB(20,18,20,26)
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
                 child: Column(children: [
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(14)),
-                        child: const Icon(Icons.calendar_view_week_rounded,
-                            color: Colors.white, size: 22)),
-                    const SizedBox(width: 14),
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('${fmt.format(kMontantHebdo)} CFA',
-                          style: const TextStyle(color: Colors.white, fontSize: 30,
-                              fontWeight: FontWeight.w900, letterSpacing: -0.5)),
-                      const Text('par samedi  •  52 semaines/an',
-                          style: TextStyle(color: Colors.white70, fontSize: 11)),
-                    ]),
-                  ]),
-                  const SizedBox(height: 16),
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-                    _stat(_nbPayes.toString(),  'Payés',   Colors.greenAccent.shade400),
-                    _dv(),
-                    _stat(_nbRetard.toString(), 'Retard',  Colors.orangeAccent),
-                    _dv(),
-                    _stat(_nbImpaye.toString(), 'Impayés', Colors.redAccent.shade100),
-                    _dv(),
-                    _stat('${fmt.format(_nbPayes * kMontantHebdo ~/ 1000)}K',
-                        'CFA/sem.', Colors.lightBlueAccent),
-                  ]),
-                  const SizedBox(height: 14),
-                  const Divider(color: Colors.white24, height: 1),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(12)),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      const Icon(Icons.lock_clock, color: Colors.white70, size: 14),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Sem.$sem ($dateSamCourant) — $nbPayesCetteSem/${_membres.length} encaissés',
-                        style: const TextStyle(color: Colors.white,
-                            fontWeight: FontWeight.bold, fontSize: 12),
-                      ),
-                    ]),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('Semaine $sem / $kTotalSemaines',
-                          style: const TextStyle(color: Colors.white,
-                              fontWeight: FontWeight.bold, fontSize: 13)),
+
+                  // Ligne 1 : montant + stats en une seule rangée
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Montant hebdo
                       Row(children: [
-                        if (_estSamediAujourdhui)
-                          Container(
-                            margin: const EdgeInsets.only(right: 6),
-                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        Container(
+                            padding: const EdgeInsets.all(7),
                             decoration: BoxDecoration(
-                                color: Colors.greenAccent.withOpacity(0.25),
-                                borderRadius: BorderRadius.circular(8)),
-                            child: const Text("AUJOURD'HUI !",
-                                style: TextStyle(color: Colors.greenAccent,
-                                    fontSize: 9, fontWeight: FontWeight.bold)),
+                                color: Colors.white.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10)),
+                            child: const Icon(Icons.calendar_view_week_rounded,
+                                color: Colors.white, size: 16)),
+                        const SizedBox(width: 10),
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('${fmt.format(kMontantHebdo)} CFA',
+                              style: const TextStyle(color: Colors.white, fontSize: 20,
+                                  fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+                          const Text('par samedi  •  52 sem./an',
+                              style: TextStyle(color: Colors.white70, fontSize: 9)),
+                        ]),
+                      ]),
+                      // Stats compactes
+                      Row(children: [
+                        _stat(_nbPayes.toString(),  'Payés',   Colors.greenAccent.shade400),
+                        _dv(),
+                        _stat(_nbRetard.toString(), 'Retard',  Colors.orangeAccent),
+                        _dv(),
+                        _stat(_nbImpaye.toString(), 'Impayés', Colors.redAccent.shade100),
+                      ]),
+                    ],
+                  ),
+
+                  const SizedBox(height: 8),
+                  const Divider(color: Colors.white24, height: 1),
+                  const SizedBox(height: 8),
+
+                  // Ligne 2 : semaine en cours + barre de progression
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Infos semaine
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            const Icon(Icons.lock_clock, color: Colors.white70, size: 12),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                'Sem.$sem ($dateSamCourant) — $nbPayesCetteSem/${_membres.length} encaissés',
+                                style: const TextStyle(color: Colors.white,
+                                    fontWeight: FontWeight.bold, fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 4),
+                          Row(children: [
+                            if (_estSamediAujourdhui) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                    color: Colors.greenAccent.withOpacity(0.25),
+                                    borderRadius: BorderRadius.circular(6)),
+                                child: const Text("AUJOURD'HUI !",
+                                    style: TextStyle(color: Colors.greenAccent,
+                                        fontSize: 8, fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(width: 5),
+                            ],
+                            Text(
+                              _estSamediAujourdhui
+                                  ? 'Journée de collecte'
+                                  : 'Prochain : ${DateFormat('dd MMM', 'fr_FR').format(_prochainSamedi)}',
+                              style: const TextStyle(color: Colors.white60, fontSize: 9),
+                            ),
+                          ]),
+                        ]),
+                      ),
+                      const SizedBox(width: 12),
+                      // Pourcentage + progression
+                      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          Text('${(pct * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(color: Colors.white,
+                                  fontWeight: FontWeight.w900, fontSize: 18)),
+                          const SizedBox(width: 4),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text('sem.$sem/$kTotalSemaines',
+                                style: const TextStyle(color: Colors.white54, fontSize: 9)),
                           ),
+                        ]),
                         Text(
-                          _estSamediAujourdhui
-                              ? 'Journée de collecte '
-                              : 'Prochain samedi : ${DateFormat('dd MMM yyyy', 'fr_FR').format(_prochainSamedi)}',
-                          style: const TextStyle(color: Colors.white60, fontSize: 10),
+                          '${fmt.format(_membres.fold(0, (s, m) => s + m.totalCotiseCfa))} CFA',
+                          style: const TextStyle(color: Colors.white60, fontSize: 9),
                         ),
                       ]),
-                    ]),
-                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                      Text('${(pct * 100).toStringAsFixed(0)}%',
-                          style: const TextStyle(color: Colors.white,
-                              fontWeight: FontWeight.w900, fontSize: 22)),
-                      Text(
-                        'Total: ${fmt.format(_membres.fold(0, (s, m) => s + m.totalCotiseCfa))} CFA',
-                        style: const TextStyle(color: Colors.white60, fontSize: 9),
-                      ),
-                    ]),
-                  ]),
+                    ],
+                  ),
+
                   const SizedBox(height: 8),
-                  ClipRRect(borderRadius: BorderRadius.circular(10),
+                  // Barre de progression
+                  ClipRRect(borderRadius: BorderRadius.circular(8),
                       child: LinearProgressIndicator(value: pct,
                           backgroundColor: Colors.white.withOpacity(0.2),
                           valueColor: const AlwaysStoppedAnimation<Color>(Colors.purpleAccent),
-                          minHeight: 8)),
+                          minHeight: 6)),
                 ]),
               ),
 
+              // Recherche
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
                 child: TextField(
                   onChanged: (v) => setState(() => _searchQuery = v),
                   decoration: InputDecoration(
@@ -825,15 +839,17 @@ class _CotisationsPageState extends State<CotisationsPage> {
                 ),
               ),
 
+              // Filtres
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
                 child: Row(children: [
                   _chip('Tous', Colors.blueGrey), _chip('Payé', Colors.green),
                   _chip('En retard', Colors.orange), _chip('Impayé', Colors.red),
                 ]),
               ),
 
+              // Liste membres
               Expanded(
                 child: TontineStore().isLoading
                     ? const Center(child: CircularProgressIndicator())
@@ -945,12 +961,13 @@ class _CotisationsPageState extends State<CotisationsPage> {
   }
 
   Widget _stat(String v, String l, Color c) => Column(children: [
-    Text(v, style: TextStyle(color: c, fontWeight: FontWeight.bold, fontSize: 14)),
-    Text(l, style: const TextStyle(color: Colors.white60, fontSize: 9)),
+    Text(v, style: TextStyle(color: c, fontWeight: FontWeight.bold, fontSize: 13)),
+    Text(l, style: const TextStyle(color: Colors.white60, fontSize: 8)),
   ]);
 
   Widget _dv() =>
-      Container(height: 26, width: 1, color: Colors.white.withOpacity(0.2));
+      Container(height: 22, width: 1, margin: const EdgeInsets.symmetric(horizontal: 8),
+          color: Colors.white.withOpacity(0.2));
 
   Widget _chip(String label, Color color) {
     final sel = _filterStatut == label;
