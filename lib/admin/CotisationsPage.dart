@@ -66,7 +66,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
           Icon(Icons.monetization_on_rounded, color: Colors.green),
-          SizedBox(width: 10), Text("Confirmer l'encaissement"),
+          SizedBox(width: 10), Text("CONFIRMER"),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(membre.nom, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -79,7 +79,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
             child: Column(children: [
               _confirmRow('Semaine', 'N° $sem'),
               _confirmRow('Date samedi', dateStr),
-              _confirmRow('Montant', '${fmt.format(kMontantHebdo)} CFA', valueColor: Colors.green),
+              _confirmRow('Montant', '${fmt.format(membre.montantCotisation)} CFA', valueColor: Colors.green),
             ]),
           ),
         ]),
@@ -100,6 +100,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
       await ApiService().encaisser(membreId: membre.id, numSemaine: sem);
       store.encaisserLocal(membre.id, sem);
       _showSnack('${membre.nom} — Sem.$sem encaissée ✓', Colors.green);
+    } on ApiException catch (e) {
     } on ApiException catch (e) {
       _showSnack(e.firstError ?? e.message, Colors.red);
     } finally { setState(() => _isLoading = false); }
@@ -145,15 +146,24 @@ class _CotisationsPageState extends State<CotisationsPage> {
 
   // ── WhatsApp ──────────────────────────────────────────────
   Future<void> _ouvrirWhatsApp(
-      String telephone, String nomMembre, int semaine, bool paye) async {
-    final fmt    = NumberFormat('#,###', 'fr_FR');
-    final raw    = telephone.replaceAll(RegExp(r'[^0-9]'), '');
+      String telephone,
+      String nomMembre,
+      int semaine,
+      bool paye,
+      int montantCotisation, // 👈 ajouté uniquement ça
+      ) async {
+    final fmt = NumberFormat('#,###', 'fr_FR');
+    final raw = telephone.replaceAll(RegExp(r'[^0-9]'), '');
     final numero = raw.startsWith('0') ? '229${raw.substring(1)}' : raw;
+
     final statut = paye
-        ? ' Votre cotisation sem.$semaine (${fmt.format(kMontantHebdo)} CFA) est bien enregistrée.'
-        : ' Votre cotisation sem.$semaine (${fmt.format(kMontantHebdo)} CFA) n\'est pas encore encaissée.';
-    final message = Uri.encodeComponent('Bonjour $nomMembre,\n\n$statut\n\nMerci — MaTontine ');
+        ? ' Votre cotisation sem.$semaine (${fmt.format(montantCotisation)} CFA) est bien enregistrée.'
+        : ' Votre cotisation sem.$semaine (${fmt.format(montantCotisation)} CFA) n\'est pas encore encaissée.';
+
+    final message = Uri.encodeComponent('Bonjour $nomMembre,\n\n$statut\n\nMerci  ');
+
     final waUrl = Uri.parse('https://wa.me/$numero?text=$message');
+
     if (await canLaunchUrl(waUrl)) {
       await launchUrl(waUrl, mode: LaunchMode.externalApplication);
     } else if (mounted) {
@@ -200,7 +210,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
                           ?? DateFormat('dd/MM/yyyy').format(store.dateDuSamedi(s)),
                       'paye':          payeFinal,
                       'statut':        payeFinal ? 'paye' : 'impaye',
-                      'montant':       payeFinal ? (c['montant'] as int? ?? kMontantHebdo) : 0,
+                      'montant':       payeFinal ? (c['montant'] as int? ?? membre.montantCotisation) : 0,
                       'cotisation_id': c['id'] as int?,
                     };
                   }).toList();
@@ -266,12 +276,12 @@ class _CotisationsPageState extends State<CotisationsPage> {
                         Row(children: [
                           Expanded(child: _resumeBox(
                               '$nbPayees', 'Payées',
-                              '${fmt.format(nbPayees * kMontantHebdo)} CFA',
+                              '${fmt.format(nbPayees * membre.montantCotisation)} CFA',
                               Colors.green)),
                           const SizedBox(width: 10),
                           Expanded(child: _resumeBox(
                               '$nbImpayes', 'Impayées',
-                              '${fmt.format(nbImpayes * kMontantHebdo)} CFA attendus',
+                              '${fmt.format(nbImpayes * membre.montantCotisation)} CFA attendus',
                               Colors.red)),
                         ]),
                     ]),
@@ -364,7 +374,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
                                               fontSize: 11)),
                                     ]),
                                     if (paye)
-                                      Text('${fmt.format(kMontantHebdo)} CFA',
+                                      Text('${fmt.format(membre.montantCotisation)} CFA',
                                           style: const TextStyle(color: Colors.green,
                                               fontWeight: FontWeight.bold, fontSize: 11)),
                                     if (!paye)
@@ -400,11 +410,11 @@ class _CotisationsPageState extends State<CotisationsPage> {
                           ),
                           onPressed: () {
                             Navigator.pop(ctx);
-                            _ouvrirWhatsApp(membre.telephone, membre.nom,
-                                semCourante, payeCourante);
+                            _ouvrirWhatsApp (membre.telephone, membre.nom,
+                                semCourante, payeCourante,membre.montantCotisation,);
                           },
                           icon: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
-                          label: const Text('Envoyer le récapitulatif via WhatsApp',
+                          label: const Text('Envoyer  un message  via WhatsApp',
                               style: TextStyle(color: Colors.white,
                                   fontWeight: FontWeight.bold, fontSize: 13)),
                         ),
@@ -458,7 +468,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
                   child: Column(children: [
                     _confirmRow('Semaine', 'N° $sem'),
                     _confirmRow('Date samedi', dateStr),
-                    _confirmRow('Montant', '${fmt.format(kMontantHebdo)} CFA',
+                    _confirmRow('Montant', '${fmt.format(membre.montantCotisation)} CFA',
                         valueColor: Colors.green),
                   ]),
                 ),
@@ -490,7 +500,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
               setModal(() {
                 historique[idx]['paye']         = true;
                 historique[idx]['statut']        = 'paye';
-                historique[idx]['montant']       = kMontantHebdo;
+                historique[idx]['montant']       = membre.montantCotisation;
                 historique[idx]['cotisation_id'] = newCotId;
               });
             }
@@ -608,7 +618,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
           const SizedBox(height: 16),
           Text(membre.nom, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           const SizedBox(height: 4),
-          Text('${fmt.format(kMontantHebdo)} CFA / samedi',
+          Text('${fmt.format(membre.montantCotisation)} CFA / samedi',
               style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
           const SizedBox(height: 8),
           Container(
@@ -637,7 +647,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
           if (!paye)
             _actionTile(Icons.check_circle_rounded, Colors.green,
                 'Encaisser semaine $sem',
-                '${fmt.format(kMontantHebdo)} CFA — $dateStr',
+                '${fmt.format(membre.montantCotisation)} CFA — $dateStr',
                     () { Navigator.pop(context); _encaisser(membre); }),
           if (paye)
             _actionTile(Icons.undo_rounded, Colors.orange,
@@ -652,7 +662,7 @@ class _CotisationsPageState extends State<CotisationsPage> {
             _actionTile(Icons.send_rounded, const Color(0xFF25D366),
                 'Contacter via WhatsApp', membre.telephone, () {
                   Navigator.pop(context);
-                  _ouvrirWhatsApp(membre.telephone, membre.nom, sem, paye);
+                  _ouvrirWhatsApp(membre.telephone, membre.nom, sem, paye,membre.montantCotisation,);
                 }),
         ]),
       ),
@@ -727,10 +737,10 @@ class _CotisationsPageState extends State<CotisationsPage> {
                                 color: Colors.white, size: 16)),
                         const SizedBox(width: 10),
                         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text('${fmt.format(kMontantHebdo)} CFA',
-                              style: const TextStyle(color: Colors.white, fontSize: 20,
+                          const Text('Cotisations',
+                              style: TextStyle(color: Colors.white, fontSize: 20,
                                   fontWeight: FontWeight.w900, letterSpacing: -0.5)),
-                          const Text('par samedi  •  52 sem./an',
+                          const Text('selon tontine  •  52 sem./an',
                               style: TextStyle(color: Colors.white70, fontSize: 9)),
                         ]),
                       ]),
@@ -933,6 +943,29 @@ class _CotisationsPageState extends State<CotisationsPage> {
                       Text('${membre.semainesCotisees} sem. payées',
                           style: TextStyle(color: Colors.grey.shade400, fontSize: 9)),
                   ]),
+                  const SizedBox(height: 4),
+
+                  // ✅ BADGE TONTINE
+                  if (membre.tontine != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: membre.tontineColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.savings_rounded,
+                            size: 10, color: membre.tontineColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${fmt.format(membre.montantCotisation)} F/sem',
+                          style: TextStyle(
+                              color: membre.tontineColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ]),
+                    ),
                 ])),
             Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Text('${membre.semainesCotisees}/$kTotalSemaines',

@@ -11,7 +11,8 @@ import 'admin/CotisationsPage.dart';
 import 'admin/DistributionsPage.dart';
 import 'admin/Sanctions.dart';
 import 'admin/ComplementsPage.dart';
-
+import'admin/DepensesPage.dart';
+import'admin/BeneficePage.dart';
 // ============================================================
 // MAIN
 // ============================================================
@@ -176,6 +177,7 @@ class AdminMoreMenu extends StatelessWidget {
         _buildProfileHeader(),
         Expanded(
           child: ListView(padding: const EdgeInsets.all(20), children: [
+
             const _SectionLabel('GESTION'),
             _buildMenuTile(context,
                 Icons.two_wheeler_rounded,
@@ -192,8 +194,23 @@ class AdminMoreMenu extends StatelessWidget {
                 'Appliquer une nouvelle amende',
                 const SanctionsPage()),
 
+            _buildMenuTile(context,
+                Icons.receipt_long_rounded,
+                const Color(0xFFE53935),
+                [const Color(0xFFE53935), const Color(0xFFEF5350)],
+                'Gestion des Dépenses',
+                'Enregistrer et suivre les dépenses',
+                const DepensesGestionPage()),
+
             const SizedBox(height: 16),
             const _SectionLabel('HISTORIQUES'),
+            _buildMenuTile(context,
+                Icons.stars_rounded,
+                const Color(0xFFFF8F00),
+                [const Color(0xFFFF8F00), const Color(0xFFFFB300)],
+                'Bénéfice Complet',
+                'Prélèvements après 52 semaines',
+                const BeneficePage()),
             _buildMenuTile(context,
                 Icons.history_rounded,
                 Colors.orange.shade700,
@@ -208,12 +225,20 @@ class AdminMoreMenu extends StatelessWidget {
                 'Historique Sanctions',
                 'Suivi des amendes et impayés',
                 const HistoriqueSanctionsPage()),
+            // ← NOUVEAU
+            _buildMenuTile(context,
+                Icons.receipt_long_rounded,
+                const Color(0xFFE53935),
+                [Colors.red.shade800, Colors.red.shade600],
+                'Historique Dépenses',
+                'Toutes les dépenses enregistrées',
+                const HistoriqueDepensesPage()),
 
             const SizedBox(height: 16),
             const _SectionLabel('MON COMPTE'),
             _buildMenuTile(context,
                 Icons.admin_panel_settings_rounded,
-                _primary,
+                const Color(0xFF1565C0),
                 [const Color(0xFF0D47A1), const Color(0xFF1976D2)],
                 'Profil Administrateur',
                 'Informations personnelles et sécurité',

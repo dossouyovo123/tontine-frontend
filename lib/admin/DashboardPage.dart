@@ -261,7 +261,24 @@ class _DashboardPageState extends State<DashboardPage>
             _buildStatCard('$approu',   'Approuvées', const Color(0xFF1E88E5), Icons.thumb_up_alt_rounded),
             _buildStatCard('$attrib',   'Attribuées', const Color(0xFF43A047), Icons.two_wheeler_rounded),
           ]),
+          const SizedBox(height: 22),
 
+          _buildSectionTitle(Icons.stars_rounded, "Bénéfices & Dépenses"),
+          const SizedBox(height: 10),
+          _grid2([
+            _buildStatCard(
+              '${fmt.format(safeInt(data['benefices']?['total']))} F',
+              'Bénéfices 52 sem.',
+              const Color(0xFFFF8F00),
+              Icons.stars_rounded,
+            ),
+            _buildStatCard(
+              '${fmt.format(safeInt(data['depenses']?['total']))} F',
+              'Total Dépenses',
+              const Color(0xFFE53935),
+              Icons.receipt_long_rounded,
+            ),
+          ]),
           const SizedBox(height: 28),
           Center(child: Text(
             "Mise à jour : ${TimeOfDay.now().format(context)}",

@@ -2,25 +2,76 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'dart:io';
 // ============================================================
 // CONSTANTES MÉTIER
 // ============================================================
 
-const int kMontantHebdo       = 10000;
+const int kMontantHebdo       = 10000; // fallback uniquement
 const int kSeuilAbandonnement = 50000;
 const int kSeuilEligibilite   = 12;
 const int kTotalSemaines      = 52;
 const int kSanctionRetard     = 300;
 const int kSanctionAbsence    = 500;
 
+// ── Catégories tontine ────────────────────────────────────────
+const Map<String, String> kCategorieLibelles = {
+  'petits':  'Petits montants',
+  'moyens':  'Moyens montants',
+  'grands':  'Grands montants',
+  'premium': 'Premium',
+};
+
+const Map<String, Color> kCategorieColors = {
+  'petits':  Color(0xFF2E7D32),
+  'moyens':  Color(0xFF1565C0),
+  'grands':  Color(0xFFE65100),
+  'premium': Color(0xFF6A1B9A),
+};
+
+// ============================================================
+// MODÈLE TONTINE
+// ============================================================
+
+class TontineModel {
+  final int    id;
+  final String nom;
+  final String categorie;
+  final int    montant;
+  final String? description;
+  final bool   isActive;
+
+  const TontineModel({
+    required this.id,
+    required this.nom,
+    required this.categorie,
+    required this.montant,
+    this.description,
+    this.isActive = true,
+  });
+
+  factory TontineModel.fromJson(Map<String, dynamic> j) => TontineModel(
+    id:          j['id'] as int,
+    nom:         j['nom'] as String,
+    categorie:   j['categorie'] as String,
+    montant:     j['montant'] as int,
+    description: j['description'] as String?,
+    isActive:    j['is_active'] == true || j['is_active'] == 1,
+  );
+
+  String get categorieLibelle => kCategorieLibelles[categorie] ?? categorie;
+  Color  get categorieColor   => kCategorieColors[categorie]   ?? Colors.blue;
+
+  /// Libellé montant avec badge si 10500 pour éviter confusion avec 10000
+  bool get necessiteBadge => montant == 10500;
+}
+
 // ============================================================
 // SERVICE API
 // ============================================================
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.211.135:8000/api/v1';
-
+ static const String baseUrl = 'https://tontineapp.com/api/v1';
   static final ApiService _i = ApiService._();
   ApiService._();
   factory ApiService() => _i;
@@ -44,10 +95,7 @@ class ApiService {
   }
 
   Future<Map<String, String>> _h({bool auth = true}) async {
-    final h = {
-      'Content-Type': 'application/json',
-      'Accept':       'application/json',
-    };
+    final h = {'Content-Type': 'application/json', 'Accept': 'application/json'};
     if (auth) {
       final t = await getToken();
       if (t != null) h['Authorization'] = 'Bearer $t';
@@ -73,7 +121,93 @@ class ApiService {
     if (r.statusCode >= 200 && r.statusCode < 300) return data;
     throw ApiException(r.statusCode, data['message'] ?? 'Erreur', data['errors']);
   }
+// ── Bénéfices ─────────────────────────────────────────────────
+  Future<Map<String, dynamic>> getBenefices({int? annee}) async =>
+      (await req('GET',
+          annee != null ? '/benefices?annee=$annee' : '/benefices'))
+      as Map<String, dynamic>;
 
+  Future<Map<String, dynamic>> calculerBenefices({int? annee}) async =>
+      (await req('POST', '/benefices/calculer',
+          body: annee != null ? {'annee': annee} : {}))
+      as Map<String, dynamic>;
+
+  Future<void> supprimerBenefice(int id) async =>
+      req('DELETE', '/benefices/$id');
+
+// ── Dépenses ──────────────────────────────────────────────────
+  Future<Map<String, dynamic>> getDepenses() async =>
+      (await req('GET', '/depenses')) as Map<String, dynamic>;
+
+  /// Crée une dépense — multipart pour l'image
+  Future<Map<String, dynamic>> creerDepense({
+    required String motif,
+    required int    montant,
+    required String dateDepense,
+    String?  notes,
+    File?    imageFile,
+  }) async {
+    final token = await getToken();
+    final uri   = Uri.parse('$baseUrl/depenses');
+    final mReq  = http.MultipartRequest('POST', uri);
+
+    mReq.headers['Accept']        = 'application/json';
+    mReq.headers['Authorization'] = 'Bearer $token';
+    mReq.fields['motif']          = motif;
+    mReq.fields['montant']        = montant.toString();
+    mReq.fields['date_depense']   = dateDepense;
+    if (notes != null) mReq.fields['notes'] = notes;
+
+    if (imageFile != null) {
+      mReq.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+    }
+
+    final streamed = await mReq.send();
+    final res      = await http.Response.fromStream(streamed);
+    final data     = jsonDecode(utf8.decode(res.bodyBytes));
+
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return data as Map<String, dynamic>;
+    }
+    throw ApiException(res.statusCode, data['message'] ?? 'Erreur', data['errors']);
+  }
+
+  /// Modifie une dépense — multipart pour l'image
+  Future<Map<String, dynamic>> modifierDepense({
+    required int    id,
+    required String motif,
+    required int    montant,
+    String? notes,
+    File?   imageFile,
+    bool    supprimerImage = false,
+  }) async {
+    final token = await getToken();
+    final uri   = Uri.parse('$baseUrl/depenses/$id/update');
+    final mReq  = http.MultipartRequest('POST', uri);
+
+    mReq.headers['Accept']        = 'application/json';
+    mReq.headers['Authorization'] = 'Bearer $token';
+    mReq.fields['motif']          = motif;
+    mReq.fields['montant']        = montant.toString();
+    if (notes != null) mReq.fields['notes'] = notes;
+    if (supprimerImage) mReq.fields['supprimer_image'] = '1';
+
+    if (imageFile != null) {
+      mReq.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+    }
+
+    final streamed = await mReq.send();
+    final res      = await http.Response.fromStream(streamed);
+    final data     = jsonDecode(utf8.decode(res.bodyBytes));
+
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return data as Map<String, dynamic>;
+    }
+    throw ApiException(res.statusCode, data['message'] ?? 'Erreur', data['errors']);
+  }
+
+  Future<void> supprimerDepense(int id) async =>
+      req('DELETE', '/depenses/$id');
   // ── Auth ──────────────────────────────────────────────────
   Future<Map<String, dynamic>> login(String email, String password) async {
     final r = await req('POST', '/login',
@@ -87,14 +221,14 @@ class ApiService {
     await clearToken();
   }
 
-  // ── Reset password (3 étapes) ─────────────────────────────
+  // ── Reset password ────────────────────────────────────────
   Future<Map<String, dynamic>> forgotPassword(String email) async =>
-      (await req('POST', '/forgot-password',
-          body: {'email': email}, auth: false)) as Map<String, dynamic>;
+      (await req('POST', '/forgot-password', body: {'email': email}, auth: false))
+      as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> verifyOtp(String email, String otp) async =>
-      (await req('POST', '/verify-otp',
-          body: {'email': email, 'otp': otp}, auth: false)) as Map<String, dynamic>;
+      (await req('POST', '/verify-otp', body: {'email': email, 'otp': otp}, auth: false))
+      as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> resetPassword({
     required String email,
@@ -103,28 +237,22 @@ class ApiService {
     required String passwordConfirmation,
   }) async =>
       (await req('POST', '/reset-password', body: {
-        'email':                 email,
-        'reset_token':           resetToken,
-        'password':              password,
-        'password_confirmation': passwordConfirmation,
+        'email': email, 'reset_token': resetToken,
+        'password': password, 'password_confirmation': passwordConfirmation,
       }, auth: false)) as Map<String, dynamic>;
 
   // ── Dashboard ─────────────────────────────────────────────
-  Future<Map<String, dynamic>> getDashboard() async =>
-      (await req('GET', '/dashboard')) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> getDashboard()          async => (await req('GET', '/dashboard'))           as Map<String, dynamic>;
+  Future<Map<String, dynamic>> getStatsCotisations()   async => (await req('GET', '/stats/cotisations'))   as Map<String, dynamic>;
+  Future<Map<String, dynamic>> getStatsSanctions()     async => (await req('GET', '/stats/sanctions'))     as Map<String, dynamic>;
+  Future<Map<String, dynamic>> getStatsMembres()       async => (await req('GET', '/stats/membres'))       as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> getStatsCotisations() async =>
-      (await req('GET', '/stats/cotisations')) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> getStatsSanctions() async =>
-      (await req('GET', '/stats/sanctions')) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> getStatsMembres() async =>
-      (await req('GET', '/stats/membres')) as Map<String, dynamic>;
+  // ── Tontines ← NOUVEAU ────────────────────────────────────
+  Future<Map<String, dynamic>> getTontines() async =>
+      (await req('GET', '/tontines')) as Map<String, dynamic>;
 
   // ── Membres ───────────────────────────────────────────────
-  Future<Map<String, dynamic>> getMembres(
-      {String? filter, String? search, int page = 1}) async {
+  Future<Map<String, dynamic>> getMembres({String? filter, String? search, int page = 1}) async {
     var p = '/membres?page=$page';
     if (filter != null) p += '&filter=$filter';
     if (search != null) p += '&search=${Uri.encodeComponent(search)}';
@@ -137,8 +265,7 @@ class ApiService {
   Future<Map<String, dynamic>> creerMembre(Map<String, dynamic> data) async =>
       (await req('POST', '/membres', body: data)) as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> modifierMembre(
-      int id, Map<String, dynamic> data) async =>
+  Future<Map<String, dynamic>> modifierMembre(int id, Map<String, dynamic> data) async =>
       (await req('PUT', '/membres/$id', body: data)) as Map<String, dynamic>;
 
   Future<void> supprimerMembre(int id) async => req('DELETE', '/membres/$id');
@@ -162,46 +289,31 @@ class ApiService {
 
   // ── Cotisations ───────────────────────────────────────────
   Future<Map<String, dynamic>> getCotisationsSemaine([int? semaine]) async =>
-      (await req('GET',
-          semaine != null
-              ? '/cotisations/semaine/$semaine'
-              : '/cotisations/semaine')) as Map<String, dynamic>;
+      (await req('GET', semaine != null ? '/cotisations/semaine/$semaine' : '/cotisations/semaine'))
+      as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> encaisser({
-    required int membreId,
-    required int numSemaine,
-    int? annee,
-  }) async =>
+  Future<Map<String, dynamic>> encaisser({required int membreId, required int numSemaine, int? annee}) async =>
       (await req('POST', '/cotisations/encaisser', body: {
-        'membre_id':   membreId,
-        'num_semaine': numSemaine,
+        'membre_id': membreId, 'num_semaine': numSemaine,
         if (annee != null) 'annee': annee,
       })) as Map<String, dynamic>;
 
-  Future<void> annulerCotisation(int id) async =>
-      req('PUT', '/cotisations/$id/annuler');
+  Future<void> annulerCotisation(int id) async => req('PUT', '/cotisations/$id/annuler');
 
   Future<Map<String, dynamic>> getCotisationsMembre(int membreId) async =>
       (await req('GET', '/membres/$membreId/cotisations')) as Map<String, dynamic>;
 
   // ── Sanctions ─────────────────────────────────────────────
-  Future<Map<String, dynamic>> getSanctions(
-      {String? statut, int? membreId}) async {
+  Future<Map<String, dynamic>> getSanctions({String? statut, int? membreId}) async {
     var p = '/sanctions?';
     if (statut   != null) p += 'statut=$statut&';
     if (membreId != null) p += 'membre_id=$membreId';
     return (await req('GET', p)) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> creerSanction({
-    required int    membreId,
-    required String motif,
-    String? notes,
-    String? dateSanction,
-  }) async =>
+  Future<Map<String, dynamic>> creerSanction({required int membreId, required String motif, String? notes, String? dateSanction}) async =>
       (await req('POST', '/sanctions', body: {
-        'membre_id': membreId,
-        'motif':     motif,
+        'membre_id': membreId, 'motif': motif,
         if (notes        != null) 'notes':         notes,
         if (dateSanction != null) 'date_sanction': dateSanction,
       })) as Map<String, dynamic>;
@@ -209,77 +321,42 @@ class ApiService {
   Future<Map<String, dynamic>> marquerSanctionPayee(int id) async =>
       (await req('POST', '/sanctions/$id/marquer-paye')) as Map<String, dynamic>;
 
-  Future<void> supprimerSanction(int id) async =>
-      req('DELETE', '/sanctions/$id');
+  Future<void> supprimerSanction(int id) async => req('DELETE', '/sanctions/$id');
 
   // ── Distributions ─────────────────────────────────────────
   Future<Map<String, dynamic>> getDistributions({int? membreId}) async =>
-      (await req('GET',
-          membreId != null
-              ? '/distributions?membre_id=$membreId'
-              : '/distributions')) as Map<String, dynamic>;
+      (await req('GET', membreId != null ? '/distributions?membre_id=$membreId' : '/distributions'))
+      as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> creerDistribution({
-    required int    membreId,
-    required int    montant,
-    required String date,
-    String? note,
-  }) async =>
+  Future<Map<String, dynamic>> creerDistribution({required int membreId, required int montant, required String date, String? note}) async =>
       (await req('POST', '/distributions', body: {
-        'membre_id':         membreId,
-        'montant':           montant,
-        'date_distribution': date,
+        'membre_id': membreId, 'montant': montant, 'date_distribution': date,
         if (note != null) 'note': note,
       })) as Map<String, dynamic>;
 
-  Future<void> supprimerDistribution(int id) async =>
-      req('DELETE', '/distributions/$id');
-
-  Future<List<int>> exportPdfDistribution(int id) async {
-    final t = await getToken();
-    final r = await http.get(Uri.parse('$baseUrl/distributions/$id/pdf'),
-        headers: {'Authorization': 'Bearer $t'});
-    if (r.statusCode == 200) return r.bodyBytes;
-    throw ApiException(r.statusCode, 'Erreur PDF');
-  }
+  Future<void> supprimerDistribution(int id) async => req('DELETE', '/distributions/$id');
 
   // ── Compléments ───────────────────────────────────────────
   Future<Map<String, dynamic>> getComplements({String? statut}) async =>
-      (await req('GET',
-          statut != null ? '/complements?statut=$statut' : '/complements'))
+      (await req('GET', statut != null ? '/complements?statut=$statut' : '/complements'))
       as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> creerComplement({
-    required int    membreId,
-    required int    montantMoto,
-    String? description,
-  }) async =>
+  Future<Map<String, dynamic>> creerComplement({required int membreId, required int montantMoto, String? description}) async =>
       (await req('POST', '/complements', body: {
-        'membre_id':           membreId,
-        'montant_moto_estime': montantMoto,
+        'membre_id': membreId, 'montant_moto_estime': montantMoto,
         if (description != null) 'description_moto': description,
       })) as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> approuverComplement(int id, {String? notes}) async =>
-      (await req('POST', '/complements/$id/approuver',
-          body: notes != null ? {'notes_admin': notes} : null))
+      (await req('POST', '/complements/$id/approuver', body: notes != null ? {'notes_admin': notes} : null))
       as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> refuserComplement(int id, {String? notes}) async =>
-      (await req('POST', '/complements/$id/refuser',
-          body: notes != null ? {'notes_admin': notes} : null))
+      (await req('POST', '/complements/$id/refuser', body: notes != null ? {'notes_admin': notes} : null))
       as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> attribuerMoto(int id) async =>
       (await req('POST', '/complements/$id/attribuer')) as Map<String, dynamic>;
-
-  Future<List<int>> exportPdfComplement(int id) async {
-    final t = await getToken();
-    final r = await http.get(Uri.parse('$baseUrl/complements/$id/pdf'),
-        headers: {'Authorization': 'Bearer $t'});
-    if (r.statusCode == 200) return r.bodyBytes;
-    throw ApiException(r.statusCode, 'Erreur PDF');
-  }
 }
 
 // ============================================================
@@ -308,7 +385,7 @@ class ApiException implements Exception {
 }
 
 // ============================================================
-// MODÈLE MEMBRE
+// MODÈLE MEMBRE — MODIFIÉ : tontine intégrée
 // ============================================================
 
 class Membre {
@@ -327,6 +404,11 @@ class Membre {
   bool estEligibleMoto;
   bool perdArgentSiAbandon;
 
+  // ← NOUVEAU
+  final int?          tontineId;
+  final TontineModel? tontine;
+  final int           montantCotisation; // montant propre au membre
+
   Membre({
     required this.id,
     required this.numRegistre,
@@ -341,24 +423,39 @@ class Membre {
     this.totalCotiseCfa      = 0,
     this.estEligibleMoto     = false,
     this.perdArgentSiAbandon = true,
+    this.tontineId           = null,    // ← NOUVEAU
+    this.tontine             = null,    // ← NOUVEAU
+    this.montantCotisation   = kMontantHebdo, // ← NOUVEAU
   });
 
-  factory Membre.fromJson(Map<String, dynamic> j) => Membre(
-    id:              j['id'] as int,
-    numRegistre:     j['num_registre'] as int,
-    nom:             j['nom'] as String,
-    telephone:       j['telephone']  as String? ?? '',
-    adresse:         j['adresse']    as String? ?? '',
-    profession:      j['profession'] as String? ?? '',
-    isActive:        j['is_active']  == true || j['is_active']  == 1,
-    aAbandonne:      j['a_abandonne'] == true || j['a_abandonne'] == 1,
-    dateInscription: j['date_inscription'] as String? ?? '',
-    semainesCotisees:    j['semaines_cotisees'] as int? ?? 0,
-    totalCotiseCfa:      j['total_cotise_cfa']  as int? ?? 0,
-    estEligibleMoto:     j['est_eligible_moto'] == true,
-    perdArgentSiAbandon: j['perd_argent_si_abandon'] == true ||
-        (j['total_cotise_cfa'] as int? ?? 0) < kSeuilAbandonnement,
-  );
+  factory Membre.fromJson(Map<String, dynamic> j) {
+    TontineModel? tontine;
+    if (j['tontine'] != null) {
+      tontine = TontineModel.fromJson(j['tontine'] as Map<String, dynamic>);
+    }
+
+    return Membre(
+      id:              j['id'] as int,
+      numRegistre:     j['num_registre'] as int,
+      nom:             j['nom'] as String,
+      telephone:       j['telephone']  as String? ?? '',
+      adresse:         j['adresse']    as String? ?? '',
+      profession:      j['profession'] as String? ?? '',
+      isActive:        j['is_active']  == true || j['is_active']  == 1,
+      aAbandonne:      j['a_abandonne'] == true || j['a_abandonne'] == 1,
+      dateInscription: j['date_inscription'] as String? ?? '',
+      semainesCotisees:    j['semaines_cotisees']    as int? ?? 0,
+      totalCotiseCfa:      j['total_cotise_cfa']     as int? ?? 0,
+      estEligibleMoto:     j['est_eligible_moto']    == true,
+      perdArgentSiAbandon: j['perd_argent_si_abandon'] == true ||
+          (j['total_cotise_cfa'] as int? ?? 0) < kSeuilAbandonnement,
+      tontineId:           j['tontine_id'] as int?,
+      tontine:             tontine,
+      montantCotisation:   j['montant_cotisation'] as int? ??
+          tontine?.montant         ??
+          kMontantHebdo,
+    );
+  }
 
   String get statutLabel =>
       aAbandonne ? 'ABANDONNÉ' : (isActive ? 'ACTIF' : 'INACTIF');
@@ -368,10 +465,16 @@ class Membre {
 
   double get progressionAnnuelle =>
       (semainesCotisees / kTotalSemaines).clamp(0.0, 1.0);
+
+  /// Nom court de la tontine pour l'affichage dans les listes
+  String get tontineLabel => tontine?.nom ?? 'Tontine non définie';
+
+  /// Couleur de la catégorie
+  Color get tontineColor => tontine?.categorieColor ?? Colors.grey;
 }
 
 // ============================================================
-// STORE GLOBAL
+// STORE GLOBAL — MODIFIÉ
 // ============================================================
 
 class TontineStore extends ChangeNotifier {
@@ -382,19 +485,16 @@ class TontineStore extends ChangeNotifier {
   Map<int, Map<int, String>> cotisationsParMembre = {};
   Map<int, Map<int, int>>    _cotisationIds       = {};
 
-  List<Membre> membres   = [];
-  bool         isLoading = false;
-  String?      errorMsg;
+  List<Membre>       membres   = [];
+  List<TontineModel> tontines  = []; // ← NOUVEAU
+  bool               isLoading = false;
+  String?            errorMsg;
 
   Map<int, Set<int>> cotisationsSemaines = {};
 
-  // ══════════════════════════════════════════════════════════
-  // ✅ RESET COMPLET — appelé au logout pour repartir propre
-  // Évite que les données/flags de la session précédente
-  // polluent la nouvelle session après re-connexion.
-  // ══════════════════════════════════════════════════════════
   void reset() {
     membres               = [];
+    tontines              = []; // ← NOUVEAU
     cotisationsParMembre  = {};
     _cotisationIds        = {};
     cotisationsSemaines   = {};
@@ -403,7 +503,7 @@ class TontineStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Dates ─────────────────────────────────────────────────
+  // ── Dates (inchangées) ────────────────────────────────────
   DateTime get premierSamediJanvier {
     final a    = DateTime.now().year;
     final jan1 = DateTime(a, 1, 1);
@@ -426,8 +526,7 @@ class TontineStore extends ChangeNotifier {
     final sem    = semaineCourante;
     final statut = statutSemaine(membreId, sem);
     if (statut == 'paye') return 'Payé';
-    final today = DateTime.now().weekday;
-    if (today > DateTime.saturday) return 'En retard';
+    if (DateTime.now().weekday > DateTime.saturday) return 'En retard';
     return 'Impayé';
   }
 
@@ -437,7 +536,6 @@ class TontineStore extends ChangeNotifier {
   String statutSemaine(int membreId, int semaine) =>
       cotisationsParMembre[membreId]?[semaine] ?? 'impaye';
 
-  // ── IDs de cotisation ─────────────────────────────────────
   void saveCotisationId(int membreId, int semaine, int cotisationId) {
     _cotisationIds.putIfAbsent(membreId, () => {});
     _cotisationIds[membreId]![semaine] = cotisationId;
@@ -446,18 +544,41 @@ class TontineStore extends ChangeNotifier {
   int? getCotisationId(int membreId, int semaine) =>
       _cotisationIds[membreId]?[semaine];
 
-  // ── Chargement — protégé contre les appels simultanés ─────
+  // ── Chargement tontines ← NOUVEAU ────────────────────────
+  Future<void> chargerTontines() async {
+    try {
+      final res = await ApiService().getTontines();
+      final cats = (res['categories'] as List? ?? []);
+      tontines = cats
+          .expand((cat) => (cat['tontines'] as List? ?? []))
+          .map((t) => TontineModel.fromJson(t as Map<String, dynamic>))
+          .toList();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Tontines groupées par catégorie (pour le picker)
+  Map<String, List<TontineModel>> get tontinesParCategorie {
+    final map = <String, List<TontineModel>>{};
+    for (final t in tontines) {
+      map.putIfAbsent(t.categorie, () => []).add(t);
+    }
+    return map;
+  }
+
+  // ── Chargement membres ────────────────────────────────────
   bool _chargeEnCours = false;
 
   Future<void> chargerMembres() async {
-    // ✅ Anti double-call : si déjà en cours, on attend pas de relancer
     if (_chargeEnCours) return;
     _chargeEnCours = true;
     isLoading = true; errorMsg = null; notifyListeners();
     try {
+      // Charge les tontines en parallèle si pas encore chargées
+      if (tontines.isEmpty) unawaited(chargerTontines());
+
       final res  = await ApiService().getMembres();
-      final data = (res['data'] as List?) ??
-          (res['membres'] as List?) ?? [];
+      final data = (res['data'] as List?) ?? (res['membres'] as List?) ?? [];
       membres = data
           .map((j) => Membre.fromJson(j as Map<String, dynamic>))
           .toList();
@@ -483,10 +604,8 @@ class TontineStore extends ChangeNotifier {
 
         cotisationsParMembre.putIfAbsent(mid, () => {});
         cotisationsParMembre[mid]![s] = statut;
-
         if (cotId != null) saveCotisationId(mid, s, cotId);
       }
-
       notifyListeners();
     } catch (e) {
       debugPrint("Erreur chargement cotisations: $e");
@@ -497,18 +616,14 @@ class TontineStore extends ChangeNotifier {
     try {
       final res   = await ApiService().getCotisationsMembre(membreId);
       final items = (res['cotisations'] as List? ?? []);
-
       cotisationsParMembre[membreId] = {};
-
       for (final c in items) {
         final sem    = c['num_semaine'] as int;
         final statut = c['statut'] as String? ?? 'impaye';
         final cotId  = c['id'] as int?;
-
         cotisationsParMembre[membreId]![sem] = statut;
         if (cotId != null) saveCotisationId(membreId, sem, cotId);
       }
-
       notifyListeners();
     } catch (e) {
       debugPrint("Erreur historique: $e");
@@ -525,7 +640,7 @@ class TontineStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Mutations cotisations ─────────────────────────────────
+  // ── Mutations cotisations ← MODIFIÉ : utilise montant du membre ──
   void encaisserLocal(int membreId, int semaine) {
     cotisationsParMembre.putIfAbsent(membreId, () => {});
     cotisationsParMembre[membreId]![semaine] = 'paye';
@@ -534,7 +649,7 @@ class TontineStore extends ChangeNotifier {
     try {
       final m = membres.firstWhere((e) => e.id == membreId);
       m.semainesCotisees++;
-      m.totalCotiseCfa += kMontantHebdo;
+      m.totalCotiseCfa += m.montantCotisation; // ← MODIFIÉ
       m.estEligibleMoto = m.semainesCotisees >= kSeuilEligibilite;
     } catch (_) {}
 
@@ -549,7 +664,7 @@ class TontineStore extends ChangeNotifier {
       final m = membres.firstWhere((e) => e.id == membreId);
       if (m.semainesCotisees > 0) {
         m.semainesCotisees--;
-        m.totalCotiseCfa -= kMontantHebdo;
+        m.totalCotiseCfa -= m.montantCotisation; // ← MODIFIÉ
         m.estEligibleMoto = m.semainesCotisees >= kSeuilEligibilite;
       }
     } catch (_) {}
@@ -557,3 +672,6 @@ class TontineStore extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+// Helper pour appel async non-attendu
+void unawaited(Future<void> future) => future.ignore();
